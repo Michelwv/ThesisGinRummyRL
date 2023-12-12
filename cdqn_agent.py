@@ -1,4 +1,8 @@
-''' CDQN agent
+''' 
+Code used from rlcards github DQN implementation and pseudocode in https://arxiv.org/abs/2003.09398.
+
+
+CDQN agent
 
 The code is derived from https://github.com/dennybritz/reinforcement-learning/blob/master/DQN/dqn.py
 
@@ -155,7 +159,6 @@ class CDQNAgent(object):
         state['legal_actions'] = safe_actions
         q_values = self.predict(state)
         epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps-1)]
-        #state['legal_actions'] = list(state['legal_actions'].keys())
         legal_actions = state['legal_actions']
         probs = np.ones(len(legal_actions), dtype=float) * epsilon / len(legal_actions)
         best_action_idx = legal_actions.index(np.argmax(q_values))
@@ -164,9 +167,9 @@ class CDQNAgent(object):
 
         #if the chosen action is a safe one
         if (legal_actions[action_idx] in safe_actions):
-            return legal_actions[action_idx]
+            return legal_actions[action_idx], False
         else: 
-            return legal_actions[action_idx]
+            return legal_actions[action_idx], True
 
     def eval_step(self, state):
         ''' Predict the action for evaluation purpose.
@@ -179,7 +182,6 @@ class CDQNAgent(object):
             info (dict): A dictionary containing information
         '''
         safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
-        #state['legal_actions'] = safe_actions
         q_values = self.predict(state)
         best_action = np.argmax(q_values)
         unsafe = False
@@ -233,7 +235,7 @@ class CDQNAgent(object):
         1. Knock and go gin if possible
         2. Do not discard cards in a meld
         3. Do not pick up a card when the visible card can be used in a meld
-        4. Do not discard low cards when high cards are still there
+        4. Do not discard low cards when high cards are still there (currently using top 3 as safe)
 
         Returns:
             safe_set (list): a list of safe actions
@@ -251,7 +253,6 @@ class CDQNAgent(object):
         elif knock_action_events:
             actions = [x.action_id for x in knock_action_events]
         elif discard_action_events:
-            #print(state)
             hand = utils.decode_cards(env_cards=state[0])
             current_deadwood = utils.get_deadwood_count(hand = hand, meld_cluster = self.get_meld_cluster(hand))
             best_discards = []
@@ -314,7 +315,7 @@ class CDQNAgent(object):
         loss = self.q_estimator.update(state_batch, action_batch, target_batch)
         print('\rINFO - Step {}, rl-loss: {}'.format(self.total_t, loss), end='')
 
-        #7.? Update the target estimator
+        #7. Update the target estimator
         if self.train_t % self.update_target_estimator_every == 0:
             self.target_estimator = deepcopy(self.q_estimator)
             print("\nINFO - Copied model parameters to target network.")
