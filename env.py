@@ -5,6 +5,8 @@ class Env(object):
     The base Env class. For all the environments in RLCard,
     we should base on this class and implement as many functions
     as we can.
+
+    Modified run function to add some extra metrics and rewards.
     '''
     def __init__(self, config):
         ''' Initialize the environment
@@ -137,32 +139,30 @@ class Env(object):
         trajectories = [[] for _ in range(self.num_players)]
         state, player_id = self.reset()
         unsafe_actions = [0 for _ in range(self.num_players)]
-        moves = 0
         # Loop to play the game
         trajectories[player_id].append(state)
-        #payoffs = [[] for _ in range(self.num_players)]
+        payoffs = [[] for _ in range(self.num_players)]
+        moves = 0
         while not self.is_over():
-            moves += 1
             # Agent plays
+            moves += 1
             if not is_training:
-                action, unsafe,  _ = self.agents[player_id].eval_step(state)
-                if (unsafe):
-                   unsafe_actions[player_id] += 1   
-                   #payoffs[player_id].append(-5.0)
-                #else:
-                    #payoffs[player_id].append(0)
+                action, unsafe, _ = self.agents[player_id].eval_step(state)
             else:
-                action = self.agents[player_id].step(state)
-               
-                #else:
-                    #payoffs[player_id].append(0)
-                     
+                action, unsafe = self.agents[player_id].step(state)
+
+            if (unsafe):
+                unsafe_actions[player_id] += 1
+                payoffs[player_id].append(-2)
+            else:
+                payoffs[player_id].append(0)
 
             # Environment steps
             next_state, next_player_id = self.step(action, self.agents[player_id].use_raw)
             # Save action
             trajectories[player_id].append(action)
 
+            # Set the state and player
             state = next_state
             player_id = next_player_id
 
@@ -175,35 +175,14 @@ class Env(object):
             state = self.get_state(player_id)
             trajectories[player_id].append(state)
 
-        # Payoffs
+        # Add final state payoffs
         final_payoffs = self.get_payoffs()
-        #payoffs[0].append(final_payoffs[0])
-        #payoffs[1].append(final_payoffs[1])
+        payoffs[0].append(final_payoffs[0])
+        payoffs[1].append(final_payoffs[1])
 
-        if not is_training:
-            return trajectories, final_payoffs, moves, unsafe_actions
-        
-        return trajectories, final_payoffs
+        return trajectories, payoffs, unsafe_actions, moves
 
 
-    '''
-    def get_reward(self, state, action, next_state, unsafe):
-         Get the reward of the state
-
-        Args:
-            state (dict): The current state
-            action (int): The action taken
-            next_state (dict): The next state
-
-        Returns:
-            (float): The reward
-        
-        if (unsafe):
-            return -0.2
-        if (action < 3):
-            return 0
-        
-    '''        
     def is_over(self):
         ''' Check whether the curent game is over
 
