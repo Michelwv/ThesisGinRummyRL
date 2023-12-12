@@ -1,3 +1,7 @@
+'''
+Modified utils with tournament and reorganize function to take into account changed reward function + metrics.
+'''
+
 import numpy as np
 
 from rlcard.games.base import Card
@@ -146,6 +150,7 @@ def print_card(cards):
 
     for line in lines:
         print ('   '.join(line))
+        
 def reorganize(trajectories, payoffs):
     ''' Reorganize the trajectory to make it RL friendly
 
@@ -155,40 +160,10 @@ def reorganize(trajectories, payoffs):
 
     Returns:
         (list): A new trajectories that can be fed into RL algorithms.
-
-    '''
-    num_players = len(trajectories)
-    new_trajectories = [[] for _ in range(num_players)]
-
-    for player in range(num_players):
-        for i in range(0, len(trajectories[player])-2, 2):
-            if i ==len(trajectories[player])-3:
-                reward = payoffs[player]
-                done =True
-            else:
-                reward, done = 0, False
-            transition = trajectories[player][i:i+3].copy()
-            transition.insert(2, reward)
-            transition.append(done)
-
-            new_trajectories[player].append(transition)
-    return new_trajectories
-'''
-def reorganize(trajectories, payoffs):
-     Reorganize the trajectory to make it RL friendly
-
-    Args:
-        trajectory (list): A list of trajectories
-        payoffs (list): A list of payoffs for the players. Each entry corresponds to one player
-
-    Returns:
-        (list): A new trajectories that can be fed into RL algorithms.
-
+    '''	
     
-
     num_players = len(trajectories)
     new_trajectories = [[] for _ in range(num_players)]
-
     for player in range(num_players):
         for i in range(0, len(trajectories[player])-2, 2):
             reward = payoffs[player][i//2]
@@ -199,7 +174,7 @@ def reorganize(trajectories, payoffs):
 
             new_trajectories[player].append(transition)
     return new_trajectories
-'''
+
 def remove_illegal(action_probs, legal_actions):
     ''' Remove illegal actions and normalize the
         probability vector
@@ -232,16 +207,12 @@ def tournament(env, num):
     '''
     payoffs = [0 for _ in range(env.num_players)]
     counter = 0
-    moves = 0
     unsafe = [0 for _ in range(env.num_players)]
-    knocks = [0 for _ in range(env.num_players)]
+    moves = 0
     wins = [0 for _ in range(env.num_players)]
     while counter < num:
-        _, _payoffs, _moves, _unsafe = env.run(is_training=False)
-        moves += _moves
-        unsafe[0] += _unsafe[0]
-        unsafe[1] += _unsafe[1]  
-        if isinstance(_payoffs, list):
+        _, _payoffs, _unsafe, _moves = env.run(is_training=False)
+        '''if isinstance(_payoffs, list):
             for _p in _payoffs:
                 for i, _ in enumerate(payoffs):
                     payoffs[i] += _p[i]
@@ -250,90 +221,29 @@ def tournament(env, num):
             for i, _ in enumerate(payoffs):
                 payoffs[i] += _payoffs[i]
             counter += 1
-        if (_payoffs[0] > _payoffs[1]):
+        '''
+        moves += _moves
+        unsafe[0] += _unsafe[0]
+        unsafe[1] += _unsafe[1]
+        payoffs[0] += _payoffs[0][-1]
+        payoffs[1] += _payoffs[1][-1]
+
+        if (_payoffs[0][-1] > _payoffs[1][-1]):
             wins[0] += 1
-            if (_payoffs[0] >= 0.5):
-                knocks[0] += 1
         else:
             wins[1] += 1
-            if (_payoffs[1] >= 0.5):
-                knocks[1] += 1
-    for i, _ in enumerate(payoffs):
-        payoffs[i] /= counter
-        wins[i] /= counter
-        unsafe[i] /= counter
-        knocks[i] /= counter
-    return [payoffs, wins, knocks, moves, unsafe, [0,0]]
-'''
-def tournament(env, num):
-     Evaluate he performance of the agents in the environment
-
-    Args:
-        env (Env class): The environment to be evaluated.
-        num (int): The number of games to play.
-
-    Returns:
-        A list of avrage payoffs for each player
-    
-    payoffs = [0 for _ in range(env.num_players)]
-    counter = 0
-    wins = [0 for _ in range(env.num_players)]
-    knocks = [0 for _ in range(env.num_players)]
-    unsafe_actions = [0 for _ in range(env.num_players)]
-    moves = 0
-    org_rewards = [0 for _ in range(env.num_players)]
-    while counter < num:
         counter += 1
-        _, _payoffs, _moves, unsafe = env.run(is_training=False)
-        moves += _moves
-        for i, _ in enumerate(unsafe_actions):
-            unsafe_actions[i] += unsafe[i]
-        if isinstance(_payoffs, list):
-            for index, _p in enumerate(_payoffs):
-                for i in range(len(_p)):
-                    payoffs[index] += _p[i]
-            if (_payoffs[0][-1] > _payoffs[1][-1]):
-                wins[0] += 1
-                if (_payoffs[0][-1] >= 0.5):
-                    knocks[0] += 1
-            else:
-                wins[1] += 1
-                if (_payoffs[1][-1] >= 0.5):
-                    knocks[1] += 1
-
-            org_rewards[0] += _payoffs[0][-1]
-            org_rewards[1] += _payoffs[1][-1]
-        
-        else:
-            if (_payoffs[0] > _payoffs[1]):
-                wins[0] += 1
-                if (_payoffs[0] >= 0.5):
-                    knocks[0] += 1
-            else:
-                wins[1] += 1
-                if (_payoffs[1] >= 0.5):
-                    knocks[1] += 1
-            for i, _ in enumerate(payoffs):
-                payoffs[i] += _payoffs[i]
-        
     for i, _ in enumerate(payoffs):
         payoffs[i] /= counter
+        unsafe[i] /= counter
         wins[i] /= counter
-        org_rewards[i] /= counter
-        unsafe_actions[i] /= counter
-    moves /= counter
 
-    #print all stats before returning
+    moves /= counter
+    unsafe[0] /= moves 
+    unsafe[1] /= moves
+    print("Moves: ", moves)
+    return payoffs, unsafe, wins
     
-    print(payoffs)
-    print(wins)
-    print(knocks)
-    print(moves)
-    print(unsafe_actions)
-    print(org_rewards)
-    
-    return [payoffs, wins, knocks, moves, unsafe_actions, org_rewards]
-'''
 def plot_curve(csv_path, save_path, algorithm):
     ''' Read data from csv file and plot the results
     '''
