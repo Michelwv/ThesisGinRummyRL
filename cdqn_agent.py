@@ -298,7 +298,7 @@ class CDQNAgent(object):
         q_values_next = self.q_estimator.predict_nograd(next_state_batch)
         legal_actions = []
         for b in range(self.batch_size):
-            legal_actions.extend([i + b * self.num_actions for i in legal_actions_batch[b]])
+            legal_actions.extend([i + b * self.num_actions for i in safe_actions_batch[b]])
         masked_q_values = -np.inf * np.ones(self.num_actions * self.batch_size, dtype=float)
         masked_q_values[legal_actions] = q_values_next.flatten()[legal_actions]
         masked_q_values = masked_q_values.reshape((self.batch_size, self.num_actions))
