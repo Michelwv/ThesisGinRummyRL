@@ -62,6 +62,7 @@ class DQNAgent(object):
                  learning_rate=0.00005,
                  device=None,
                  save_path=None,
+                 number_discards = 3,
                  save_every=float('inf'),):
 
         '''
@@ -98,7 +99,7 @@ class DQNAgent(object):
         self.batch_size = batch_size
         self.num_actions = num_actions
         self.train_every = train_every
-
+        self.number_discards = number_discards
         # Torch device
         if device is None:
             self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -153,13 +154,15 @@ class DQNAgent(object):
             action (int): an action id
         '''
         q_values = self.predict(state)
-        epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps-1)]
-        legal_actions = list(state['legal_actions'].keys())
-        probs = np.ones(len(legal_actions), dtype=float) * epsilon / len(legal_actions)
-        best_action_idx = legal_actions.index(np.argmax(q_values))
-        probs[best_action_idx] += (1.0 - epsilon)
-        action_idx = np.random.choice(np.arange(len(probs)), p=probs)
-        return legal_actions[action_idx]
+        best_action = np.argmax(q_values)
+        safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
+                                               
+        if (best_action in safe_actions):
+            unsafe = False
+        else:
+            unsafe = True
+
+        return best_action, unsafe
 
     def eval_step(self, state):
         ''' Predict the action for evaluation purpose.
@@ -171,18 +174,15 @@ class DQNAgent(object):
             action (int): an action id
             info (dict): A dictionary containing information
         '''
-        safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
-        #state['legal_actions'] = safe_actions
+
         q_values = self.predict(state)
         best_action = np.argmax(q_values)
-        unsafe = False
-        if (best_action not in safe_actions):
-            unsafe = True
+        safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
+        unsafe = True
+        if (best_action in safe_actions):
+            unsafe = False
         info = {}
-        if (isinstance(state['legal_actions'], dict)):
-            info['values'] = {state['raw_legal_actions'][i]: float(q_values[list(state['legal_actions'].keys())[i]]) for i in range(len(state['legal_actions']))}
-        else:
-            info['values'] = {state['raw_legal_actions'][i]: float(q_values[state['legal_actions'][i]]) for i in range(len(state['legal_actions']))}
+        info['values'] = {state['raw_legal_actions'][i]: float(q_values[list(state['legal_actions'].keys())[i]]) for i in range(len(state['legal_actions']))}
 
         return best_action, unsafe, info
 
@@ -202,7 +202,7 @@ class DQNAgent(object):
         masked_q_values[legal_actions] = q_values[legal_actions]
 
         return masked_q_values
-
+    
     def get_meld_cluster(self, hand):
         meld_clusters = melding.get_best_meld_clusters(hand=hand)
         if (len(meld_clusters) > 0):
@@ -254,8 +254,7 @@ class DQNAgent(object):
                 else:
                     best_discards.append((discard_action_event.action_id, deadwood_count))
             best_discards.sort(key=lambda x: x[1])
-            top_4_actions = [action for action, _ in best_discards[:4]]
-            actions = top_4_actions
+            actions = [action for action, _ in best_discards[:3]]
         elif pick_up_discard_events:
             hand = utils.decode_cards(env_cards=state[0])
             current_deadwood = utils.get_deadwood_count(hand = hand, meld_cluster = self.get_meld_cluster(hand))
