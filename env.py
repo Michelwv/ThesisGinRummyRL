@@ -5,8 +5,6 @@ class Env(object):
     The base Env class. For all the environments in RLCard,
     we should base on this class and implement as many functions
     as we can.
-
-    Modified run function to add some extra metrics and rewards.
     '''
     def __init__(self, config):
         ''' Initialize the environment
@@ -46,7 +44,6 @@ class Env(object):
 
         # A counter for the timesteps
         self.timestep = 0
-
 
         # Set random seed, default is None
         self.seed(config['seed'])
@@ -153,7 +150,7 @@ class Env(object):
 
             if (unsafe):
                 unsafe_actions[player_id] += 1
-                payoffs[player_id].append(-2)
+                payoffs[player_id].append(0)
             else:
                 payoffs[player_id].append(0)
 
@@ -175,13 +172,12 @@ class Env(object):
             state = self.get_state(player_id)
             trajectories[player_id].append(state)
 
-        # Add final state payoffs
+        # Payoffs
         final_payoffs = self.get_payoffs()
         payoffs[0].append(final_payoffs[0])
         payoffs[1].append(final_payoffs[1])
 
         return trajectories, payoffs, unsafe_actions, moves
-
 
     def is_over(self):
         ''' Check whether the curent game is over
