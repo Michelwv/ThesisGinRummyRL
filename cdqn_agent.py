@@ -1,7 +1,6 @@
 ''' 
 Code used from rlcards github DQN implementation and pseudocode in https://arxiv.org/abs/2003.09398.
 
-
 CDQN agent
 
 The code is derived from https://github.com/dennybritz/reinforcement-learning/blob/master/DQN/dqn.py
@@ -29,6 +28,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 
+import os
 import random
 import numpy as np
 import torch
@@ -65,6 +65,9 @@ class CDQNAgent(object):
                  learning_rate=0.00005,
                  device=None,
                  save_path=None,
+                 number_discards = 3,
+                 execution_step = False,
+                 optimization_step = True,
                  save_every=float('inf'),):
 
         '''
@@ -102,6 +105,9 @@ class CDQNAgent(object):
         self.num_actions = num_actions
         self.train_every = train_every
 
+        self.number_discards = number_discards
+        self.execution_step = execution_step
+        self.optimization_step = optimization_step  
         # Torch device
         if device is None:
             self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -139,7 +145,7 @@ class CDQNAgent(object):
             ts (list): a list of 5 elements that represent the transition
         '''
         (state, action, reward, next_state, done) = tuple(ts)
-        self.feed_memory(state['obs'], action, reward, next_state['obs'], next_state['legal_actions'], done)
+        self.feed_memory(state['obs'], action, reward, next_state['obs'], list(next_state['legal_actions'].keys()), done)
         self.total_t += 1
         tmp = self.total_t - self.replay_memory_init_size
         if tmp>=0 and tmp%self.train_every == 0:
@@ -155,21 +161,17 @@ class CDQNAgent(object):
         Returns:
             action (int): an action id
         '''
-        safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
-        state['legal_actions'] = safe_actions
         q_values = self.predict(state)
-        epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps-1)]
-        legal_actions = state['legal_actions']
-        probs = np.ones(len(legal_actions), dtype=float) * epsilon / len(legal_actions)
-        best_action_idx = legal_actions.index(np.argmax(q_values))
-        probs[best_action_idx] += (1.0 - epsilon)
-        action_idx = np.random.choice(np.arange(len(probs)), p=probs)
+        safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
+        if (self.execution_step):
+            mask = np.full(len(q_values), -np.inf)
+            mask[safe_actions] = 0
+            masked_q_values = q_values + mask
+            best_action = np.argmax(masked_q_values)
+        else:
+            best_action = np.argmax(q_values)
 
-        #if the chosen action is a safe one
-        if (legal_actions[action_idx] in safe_actions):
-            return legal_actions[action_idx], False
-        else: 
-            return legal_actions[action_idx], True
+        return best_action, False
 
     def eval_step(self, state):
         ''' Predict the action for evaluation purpose.
@@ -181,17 +183,14 @@ class CDQNAgent(object):
             action (int): an action id
             info (dict): A dictionary containing information
         '''
-        safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
         q_values = self.predict(state)
         best_action = np.argmax(q_values)
+        safe_actions = self.calculate_safe_set(state['obs'], list(state['legal_actions'].keys()))
         unsafe = False
         if (best_action not in safe_actions):
             unsafe = True
         info = {}
-        if (isinstance(state['legal_actions'], dict)):
-            info['values'] = {state['raw_legal_actions'][i]: float(q_values[list(state['legal_actions'].keys())[i]]) for i in range(len(state['legal_actions']))}
-        else:
-            info['values'] = {state['raw_legal_actions'][i]: float(q_values[state['legal_actions'][i]]) for i in range(len(state['legal_actions']))}
+        info['values'] = {state['raw_legal_actions'][i]: float(q_values[list(state['legal_actions'].keys())[i]]) for i in range(len(state['legal_actions']))}
 
         return best_action, unsafe, info
 
@@ -207,13 +206,11 @@ class CDQNAgent(object):
         
         q_values = self.q_estimator.predict_nograd(np.expand_dims(state['obs'], 0))[0]
         masked_q_values = -np.inf * np.ones(self.num_actions, dtype=float)
-        legal_actions = state['legal_actions']
-        if (isinstance(legal_actions, dict)):
-            legal_actions = list(state['legal_actions'].keys())
+        legal_actions = list(state['legal_actions'].keys())
         masked_q_values[legal_actions] = q_values[legal_actions]
 
         return masked_q_values
-    
+
 
     def get_meld_cluster(self, hand):
         meld_clusters = melding.get_best_meld_clusters(hand=hand)
@@ -235,7 +232,7 @@ class CDQNAgent(object):
         1. Knock and go gin if possible
         2. Do not discard cards in a meld
         3. Do not pick up a card when the visible card can be used in a meld
-        4. Do not discard low cards when high cards are still there (currently using top 3 as safe)
+        4. Do not discard low cards when high cards are still there
 
         Returns:
             safe_set (list): a list of safe actions
@@ -253,6 +250,7 @@ class CDQNAgent(object):
         elif knock_action_events:
             actions = [x.action_id for x in knock_action_events]
         elif discard_action_events:
+            #print(state)
             hand = utils.decode_cards(env_cards=state[0])
             current_deadwood = utils.get_deadwood_count(hand = hand, meld_cluster = self.get_meld_cluster(hand))
             best_discards = []
@@ -265,8 +263,7 @@ class CDQNAgent(object):
                 else:
                     best_discards.append((discard_action_event.action_id, deadwood_count))
             best_discards.sort(key=lambda x: x[1])
-            top_3_actions = [action for action, _ in best_discards[:3]]
-            actions = top_3_actions
+            actions = [action for action, _ in best_discards[:self.number_discards]]
         elif pick_up_discard_events:
             hand = utils.decode_cards(env_cards=state[0])
             current_deadwood = utils.get_deadwood_count(hand = hand, meld_cluster = self.get_meld_cluster(hand))
@@ -277,45 +274,43 @@ class CDQNAgent(object):
                 actions = [3]
 
         return actions
-    
-    
+
     def train(self):
         ''' Train the network
 
         Returns:
             loss (float): The loss of the current batch.
         '''
-        #3. Sample a minibatch from the replay memory
         state_batch, action_batch, reward_batch, next_state_batch, done_batch, legal_actions_batch = self.memory.sample()
-
-        #4. Calculate safe sets for all constraints
-        safe_action_batch = []
-       
-        for i in range (len(next_state_batch)):
-            safe_action_batch.append(self.calculate_safe_set(next_state_batch[i], legal_actions_batch[i]))
-
+        if (self.optimization_step):
+            safe_action_batch = []
+            for i in range (len(next_state_batch)):
+                safe_action_batch.append(self.calculate_safe_set(next_state_batch[i], list(legal_actions_batch[i])))
+        else:
+            safe_action_batch = legal_actions_batch
+        
         # Calculate best next actions using Q-network (Double DQN)
         q_values_next = self.q_estimator.predict_nograd(next_state_batch)
         legal_actions = []
         for b in range(self.batch_size):
-            legal_actions.extend([i + b * self.num_actions for i in safe_actions_batch[b]])
+            legal_actions.extend([i + b * self.num_actions for i in safe_action_batch[b]])
         masked_q_values = -np.inf * np.ones(self.num_actions * self.batch_size, dtype=float)
         masked_q_values[legal_actions] = q_values_next.flatten()[legal_actions]
         masked_q_values = masked_q_values.reshape((self.batch_size, self.num_actions))
         best_actions = np.argmax(masked_q_values, axis=1)
 
-        #5.? Evaluate best next actions using Target-network (Double DQN)
+        # Evaluate best next actions using Target-network (Double DQN)
         q_values_next_target = self.target_estimator.predict_nograd(next_state_batch)
         target_batch = reward_batch + np.invert(done_batch).astype(np.float32) * \
             self.discount_factor * q_values_next_target[np.arange(self.batch_size), best_actions]
 
-        #6. Perform gradient descent update
+        # Perform gradient descent update
         state_batch = np.array(state_batch)
 
         loss = self.q_estimator.update(state_batch, action_batch, target_batch)
         print('\rINFO - Step {}, rl-loss: {}'.format(self.total_t, loss), end='')
 
-        #7. Update the target estimator
+        # Update the target estimator
         if self.train_t % self.update_target_estimator_every == 0:
             self.target_estimator = deepcopy(self.q_estimator)
             print("\nINFO - Copied model parameters to target network.")
@@ -360,17 +355,20 @@ class CDQNAgent(object):
             'memory': self.memory.checkpoint_attributes(),
             'total_t': self.total_t,
             'train_t': self.train_t,
+            'replay_memory_init_size': self.replay_memory_init_size,
+            'update_target_estimator_every': self.update_target_estimator_every,
+            'discount_factor': self.discount_factor,
             'epsilon_start': self.epsilons.min(),
             'epsilon_end': self.epsilons.max(),
             'epsilon_decay_steps': self.epsilon_decay_steps,
-            'discount_factor': self.discount_factor,
-            'update_target_estimator_every': self.update_target_estimator_every,
             'batch_size': self.batch_size,
             'num_actions': self.num_actions,
             'train_every': self.train_every,
-            'device': self.device
+            'device': self.device,
+            'save_path': self.save_path,
+            'save_every': self.save_every
         }
-        
+
     @classmethod
     def from_checkpoint(cls, checkpoint):
         '''
@@ -383,6 +381,7 @@ class CDQNAgent(object):
         print("\nINFO - Restoring model from checkpoint...")
         agent_instance = cls(
             replay_memory_size=checkpoint['memory']['memory_size'],
+            replay_memory_init_size=checkpoint['replay_memory_init_size'],
             update_target_estimator_every=checkpoint['update_target_estimator_every'],
             discount_factor=checkpoint['discount_factor'],
             epsilon_start=checkpoint['epsilon_start'],
@@ -390,10 +389,13 @@ class CDQNAgent(object):
             epsilon_decay_steps=checkpoint['epsilon_decay_steps'],
             batch_size=checkpoint['batch_size'],
             num_actions=checkpoint['num_actions'], 
-            device=checkpoint['device'], 
             state_shape=checkpoint['q_estimator']['state_shape'],
+            train_every=checkpoint['train_every'],
             mlp_layers=checkpoint['q_estimator']['mlp_layers'],
-            train_every=checkpoint['train_every']
+            learning_rate=checkpoint['q_estimator']['learning_rate'],
+            device=checkpoint['device'],
+            save_path=checkpoint['save_path'],
+            save_every=checkpoint['save_every'],
         )
         
         agent_instance.total_t = checkpoint['total_t']
@@ -402,8 +404,7 @@ class CDQNAgent(object):
         agent_instance.q_estimator = Estimator.from_checkpoint(checkpoint['q_estimator'])
         agent_instance.target_estimator = deepcopy(agent_instance.q_estimator)
         agent_instance.memory = Memory.from_checkpoint(checkpoint['memory'])
-        
-        
+
         return agent_instance
                      
     def save_checkpoint(self, path, filename='checkpoint_dqn.pt'):
@@ -411,9 +412,11 @@ class CDQNAgent(object):
 
         Args:
             path (str): the path to save the model
+            filename(str): the file name of checkpoint
         '''
-        torch.save(self.checkpoint_attributes(), path + '/' + filename)
-        
+        torch.save(self.checkpoint_attributes(), os.path.join(path, filename))
+
+
 class Estimator(object):
     '''
     Approximate clone of rlcard.agents.dqn_agent.Estimator that
