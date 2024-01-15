@@ -1,7 +1,3 @@
-'''
-Modified utils with tournament and reorganize function to take into account changed reward function + metrics.
-'''
-
 import numpy as np
 
 from rlcard.games.base import Card
@@ -23,7 +19,10 @@ def set_seed(seed):
 
 def get_device():
     import torch
-    if torch.cuda.is_available():
+    if torch.backends.mps.is_available():
+        device = torch.device("mps:0")
+        print("--> Running on the GPU")
+    elif torch.cuda.is_available():
         device = torch.device("cuda:0")
         print("--> Running on the GPU")
     else:
@@ -150,7 +149,7 @@ def print_card(cards):
 
     for line in lines:
         print ('   '.join(line))
-        
+
 def reorganize(trajectories, payoffs):
     ''' Reorganize the trajectory to make it RL friendly
 
@@ -194,7 +193,6 @@ def remove_illegal(action_probs, legal_actions):
         probs /= sum(probs)
     return probs
 
-
 def tournament(env, num):
     ''' Evaluate he performance of the agents in the environment
 
@@ -210,40 +208,52 @@ def tournament(env, num):
     unsafe = [0 for _ in range(env.num_players)]
     moves = 0
     wins = [0 for _ in range(env.num_players)]
+    knocks = [0 for _ in range(env.num_players)]
+    gins = [0 for _ in range(env.num_players)]
+    end_deadwood = [0 for _ in range(env.num_players)]
+    deadwoodcount = 0
     while counter < num:
         _, _payoffs, _unsafe, _moves = env.run(is_training=False)
-        '''if isinstance(_payoffs, list):
-            for _p in _payoffs:
-                for i, _ in enumerate(payoffs):
-                    payoffs[i] += _p[i]
-                counter += 1
-        else:
-            for i, _ in enumerate(payoffs):
-                payoffs[i] += _payoffs[i]
-            counter += 1
-        '''
         moves += _moves
         unsafe[0] += _unsafe[0]
         unsafe[1] += _unsafe[1]
         payoffs[0] += _payoffs[0][-1]
         payoffs[1] += _payoffs[1][-1]
 
+        if (_payoffs[0][-1] < 0.5 and _payoffs[1][-1] < 0.5):
+            end_deadwood[0] += _payoffs[0][-1]*-100
+            end_deadwood[1] += _payoffs[1][-1]*-100
+            deadwoodcount += 1
         if (_payoffs[0][-1] > _payoffs[1][-1]):
             wins[0] += 1
+            if (_payoffs[0][-1] >= 0.5):
+                if (_payoffs[0][-1] >= 1.0):
+                    gins[0] += 1
+                else:
+                    knocks[0] += 1
         else:
             wins[1] += 1
+            if (_payoffs[1][-1] >= 0.5):
+                if (_payoffs[1][-1] >= 1.0):
+                    gins[1] += 1
+                else:
+                    knocks[1] += 1
         counter += 1
     for i, _ in enumerate(payoffs):
         payoffs[i] /= counter
         unsafe[i] /= counter
         wins[i] /= counter
+        end_deadwood[i] /= deadwoodcount
 
     moves /= counter
     unsafe[0] /= moves 
     unsafe[1] /= moves
     print("Moves: ", moves)
+    print("Knocks: ", knocks)
+    print("Gins: ", gins)
+    print("end_deadwood: ", end_deadwood)
     return payoffs, unsafe, wins
-    
+
 def plot_curve(csv_path, save_path, algorithm):
     ''' Read data from csv file and plot the results
     '''
